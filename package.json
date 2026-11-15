@@ -1,0 +1,16 @@
+{
+  "name": "rabb-it-render-host",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Express static frontend host for Render",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
