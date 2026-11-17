@@ -388,11 +388,24 @@ app.get('/__repo/file', async (req, res) => {
   }
 });
 
+// Visiting the site root automatically loads the repository's index.html.
 app.get('/', async (req, res) => {
   try {
-    await sendDashboard(res);
+    const file = await getRepositoryFile('index.html');
+
+    if (!file) {
+      return res.status(404).type('text').send(
+        'index.html was not found in the root of the GitHub repository.'
+      );
+    }
+
+    res.status(200);
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.send(file.buffer);
   } catch (error) {
-    console.error('Dashboard load failed:', error);
+    console.error('Could not load index.html:', error);
     res.status(502).type('html').send(errorPage(error));
   }
 });
