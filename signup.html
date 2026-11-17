@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign Up – Rabbit</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #f06a5a 0%, #e85a4f 40%, #d94a3f 100%);
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      -webkit-font-smoothing: antialiased;
+    }
+    .card {
+      background: #fff; border-radius: 16px; padding: 40px 36px;
+      width: 100%; max-width: 400px; box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+    }
+    .logo { text-align: center; margin-bottom: 28px; }
+    .logo img { width: 56px; height: 56px; }
+    h1 { font-size: 24px; font-weight: 700; text-align: center; margin-bottom: 8px; color: #1a1a1a; }
+    .subtitle { text-align: center; color: #888; font-size: 14px; margin-bottom: 28px; }
+    .form-group { margin-bottom: 20px; }
+    .form-group label { display: block; font-size: 13px; color: #666; margin-bottom: 6px; }
+    .form-group input {
+      width: 100%; border: 1.5px solid #e0e0e0; border-radius: 10px;
+      padding: 12px 14px; font-size: 15px; outline: none; transition: border-color 0.2s;
+    }
+    .form-group input:focus { border-color: #e85a4f; }
+    .btn {
+      width: 100%; background: #a8c5f0; color: #fff; border: none; border-radius: 999px;
+      padding: 14px 0; font-size: 16px; font-weight: 600; cursor: pointer;
+      margin-top: 8px; transition: background 0.2s;
+    }
+    .btn:hover { background: #8bb0e8; }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .error-msg { color: #e74c3c; font-size: 13px; margin-top: 12px; text-align: center; display: none; }
+    .success-msg { color: #27ae60; font-size: 13px; margin-top: 12px; text-align: center; display: none; }
+    .footer-text { text-align: center; margin-top: 24px; font-size: 14px; color: #666; }
+    .footer-text a { color: #e85a4f; text-decoration: none; font-weight: 500; }
+    .back { display: block; text-align: center; margin-top: 16px; font-size: 13px; color: #999; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">
+      <a href="/"><img src="data:image/png;base64,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" alt="Rabbit"></a>
+    </div>
+    <h1>Create your account</h1>
+    <p class="subtitle">Join Rabbit and watch with friends</p>
+
+    <form id="signupForm">
+      <div class="form-group">
+        <label>Email address</label>
+        <input type="email" id="email" required placeholder="you@example.com" />
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="password" required minlength="6" placeholder="At least 6 characters" />
+      </div>
+      <button type="submit" class="btn" id="signupBtn">Sign Up</button>
+      <p class="error-msg" id="errorMsg"></p>
+      <p class="success-msg" id="successMsg"></p>
+    </form>
+
+    <p class="footer-text">
+      Already have an account? <a href="/login">Log In</a>
+    </p>
+    <a href="/" class="back">← Back to Rabbit</a>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+    import { getAuth, createUserWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyB0oC7igOIP6DCE6ZRQmWOe2E7Ennt1t_U",
+      authDomain: "rabbit-4d9dd.firebaseapp.com",
+      projectId: "rabbit-4d9dd",
+      storageBucket: "rabbit-4d9dd.firebasestorage.app",
+      messagingSenderId: "931872074964",
+      appId: "1:931872074964:web:d4fc4c45675ed3f6ba1f41",
+      measurementId: "G-0YY44D033K"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+
+    onAuthStateChanged(auth, (user) => {
+      if (user) window.location.href = '/home';
+    });
+
+    const form = document.getElementById('signupForm');
+    const signupBtn = document.getElementById('signupBtn');
+    const errorMsg = document.getElementById('errorMsg');
+    const successMsg = document.getElementById('successMsg');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorMsg.style.display = 'none';
+      successMsg.style.display = 'none';
+      signupBtn.disabled = true;
+      signupBtn.textContent = 'Creating account...';
+
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+
+      try {
+        await createUserWithEmailAndPassword(auth, email, password);
+        successMsg.textContent = 'Account created! Redirecting...';
+        successMsg.style.display = 'block';
+        setTimeout(() => window.location.href = '/home', 900);
+      } catch (err) {
+        let message = err.message;
+        if (err.code === 'auth/email-already-in-use') message = 'This email is already registered.';
+        if (err.code === 'auth/weak-password') message = 'Password should be at least 6 characters.';
+        if (err.code === 'auth/invalid-email') message = 'Please enter a valid email.';
+        errorMsg.textContent = message;
+        errorMsg.style.display = 'block';
+        signupBtn.disabled = false;
+        signupBtn.textContent = 'Sign Up';
+      }
+    });
+  </script>
+</body>
+</html>
