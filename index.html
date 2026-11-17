@@ -70,10 +70,44 @@
     .signup-btn {
       width: 100%; background: #a8c5f0; color: #fff; border: none; border-radius: 999px;
       padding: 14px 0; font-size: 16px; font-weight: 600; cursor: pointer;
-      margin-top: 12px; margin-bottom: 18px; transition: background 0.2s;
+      margin-top: 12px; margin-bottom: 18px; transition: all 0.3s ease;
+      box-shadow: none; opacity: 0.4; filter: grayscale(0.4);
     }
-    .signup-btn:hover { background: #8bb0e8; }
-    .signup-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .signup-btn.enabled {
+      opacity: 1; filter: none;
+      background: #7eb6ff;
+      box-shadow:
+        0 0 8px #7eb6ff,
+        0 0 20px #7eb6ff,
+        0 0 40px rgba(126,182,255,0.7),
+        0 0 80px rgba(126,182,255,0.4);
+      animation: neonPulse 1.6s ease-in-out infinite;
+    }
+    .signup-btn.enabled:hover {
+      background: #92c4ff;
+      box-shadow:
+        0 0 12px #92c4ff,
+        0 0 28px #92c4ff,
+        0 0 55px rgba(146,196,255,0.8),
+        0 0 100px rgba(146,196,255,0.5);
+    }
+    .signup-btn:disabled { cursor: not-allowed; }
+    @keyframes neonPulse {
+      0%, 100% {
+        box-shadow:
+          0 0 8px #7eb6ff,
+          0 0 20px #7eb6ff,
+          0 0 40px rgba(126,182,255,0.6),
+          0 0 70px rgba(126,182,255,0.3);
+      }
+      50% {
+        box-shadow:
+          0 0 14px #92c4ff,
+          0 0 32px #92c4ff,
+          0 0 60px rgba(146,196,255,0.85),
+          0 0 110px rgba(146,196,255,0.5);
+      }
+    }
     .terms { font-size: 12px; color: #999; text-align: center; }
     .terms a { color: #666; text-decoration: underline; }
     .error-msg { color: #e74c3c; font-size: 13px; margin-top: 8px; text-align: center; display: none; }
@@ -194,7 +228,7 @@
             <label>Password</label>
             <input type="password" id="password" required minlength="6" placeholder="" />
           </div>
-          <button type="submit" class="signup-btn" id="signupBtn">Sign Up</button>
+          <button type="submit" class="signup-btn" id="signupBtn" disabled>Sign Up</button>
           <p class="error-msg" id="errorMsg"></p>
           <p class="success-msg" id="successMsg"></p>
         </form>
@@ -320,6 +354,24 @@
     const errorMsg = document.getElementById('errorMsg');
     const successMsg = document.getElementById('successMsg');
 
+    const emailInput = document.getElementById('email');
+    const passwordInput = document.getElementById('password');
+
+    function updateButtonState() {
+      const filled = emailInput.value.trim().length > 0 && passwordInput.value.length > 0;
+      signupBtn.disabled = !filled;
+      if (filled) {
+        signupBtn.classList.add('enabled');
+      } else {
+        signupBtn.classList.remove('enabled');
+      }
+    }
+
+    emailInput.addEventListener('input', updateButtonState);
+    passwordInput.addEventListener('input', updateButtonState);
+    updateButtonState();
+
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       errorMsg.style.display = 'none';
@@ -344,8 +396,8 @@
         if (err.code === 'auth/invalid-email') message = 'Please enter a valid email.';
         errorMsg.textContent = message;
         errorMsg.style.display = 'block';
-        signupBtn.disabled = false;
         signupBtn.textContent = 'Sign Up';
+        updateButtonState();
       }
     });
   </script>
