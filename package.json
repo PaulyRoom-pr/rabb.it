@@ -1,16 +1,16 @@
 {
-  "name": "rabb-it-render-host",
+  "name": "rabbit-app",
   "version": "1.0.0",
-  "private": true,
-  "description": "Express static frontend host for Render",
+  "description": "Rabbit - Watch anything with anyone",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
-  },
-  "dependencies": {
-    "express": "^5.1.0"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
   }
 }
