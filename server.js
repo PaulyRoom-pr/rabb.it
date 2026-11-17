@@ -3,7 +3,9 @@ const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// GitHub repository to serve.
+app.set('trust proxy', 1);
+
+// GitHub repository configuration.
 const GITHUB_OWNER = 'PaulyRoom-pr';
 const GITHUB_REPO = 'rabb.it';
 const GITHUB_BRANCH = 'main';
@@ -14,18 +16,25 @@ const API_TREE_URL =
 const RAW_BASE_URL =
   `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/`;
 
+// Only these HTML files may be served.
+const ALLOWED_FILES = new Set([
+  'movieapi.html',
+  'membershipapi.html',
+  'reportabuseapi.html',
+  'friendapi.html',
+  'y1hs6s2m8.html'
+]);
+
 const TREE_CACHE_MS = 5 * 60 * 1000;
-let cachedFiles = null;
+let cachedAllowedFiles = null;
 let treeFetchedAt = 0;
 
-app.set('trust proxy', 1);
-
-async function getRepositoryFiles() {
-  const cacheIsFresh =
-    cachedFiles && Date.now() - treeFetchedAt < TREE_CACHE_MS;
-
-  if (cacheIsFresh) {
-    return cachedFiles;
+async function getAllowedRepositoryFiles() {
+  if (
+    cachedAllowedFiles &&
+    Date.now() - treeFetchedAt < TREE_CACHE_MS
+  ) {
+    return cachedAllowedFiles;
   }
 
   const response = await fetch(API_TREE_URL, {
@@ -37,46 +46,33 @@ async function getRepositoryFiles() {
 
   if (!response.ok) {
     throw new Error(
-      `GitHub file listing failed: ${response.status} ${response.statusText}`
+      `GitHub repository lookup failed: ${response.status}`
     );
   }
 
   const data = await response.json();
 
   if (!Array.isArray(data.tree)) {
-    throw new Error('GitHub returned an invalid repository file tree.');
+    throw new Error('GitHub returned an invalid repository tree.');
   }
 
-  // Keep files only; folders are represented by their child file paths.
-  cachedFiles = data.tree
+  cachedAllowedFiles = data.tree
     .filter((item) => item.type === 'blob')
-    .map((item) => item.path);
+    .map((item) => item.path)
+    .filter((file) => ALLOWED_FILES.has(
+      file.split('/').pop().toLowerCase()
+    ));
 
   treeFetchedAt = Date.now();
 
   if (data.truncated) {
-    console.warn(
-      'Warning: GitHub truncated the recursive tree response. ' +
-      'Not every repository file may be listed.'
-    );
+    console.warn('GitHub truncated the repository tree response.');
   }
 
-  return cachedFiles;
+  return cachedAllowedFiles;
 }
 
-function findIndexFile(files) {
-  // Prefer /index.html in the repository root.
-  if (files.includes('index.html')) {
-    return 'index.html';
-  }
-
-  // Otherwise use the first index.html found in a subfolder.
-  return files
-    .filter((file) => file.toLowerCase().endsWith('/index.html'))
-    .sort((a, b) => a.localeCompare(b))[0] || null;
-}
-
-function safeDecodePath(value) {
+function decodeRequestedPath(value) {
   try {
     return decodeURIComponent(value).replace(/^\/+/, '');
   } catch {
@@ -84,15 +80,19 @@ function safeDecodePath(value) {
   }
 }
 
-async function sendRepositoryFile(res, repositoryPath, options = {}) {
-  const files = await getRepositoryFiles();
+async function serveAllowedFile(res, repositoryPath) {
+  const allowedFiles = await getAllowedRepositoryFiles();
 
-  // Only serve paths that actually exist in the GitHub repository.
-  if (!files.includes(repositoryPath)) {
+  // Match only a file in the explicit allowlist.
+  const actualPath = allowedFiles.find(
+    (file) => file.toLowerCase() === repositoryPath.toLowerCase()
+  );
+
+  if (!actualPath) {
     return false;
   }
 
-  const encodedPath = repositoryPath
+  const encodedPath = actualPath
     .split('/')
     .map(encodeURIComponent)
     .join('/');
@@ -104,41 +104,17 @@ async function sendRepositoryFile(res, repositoryPath, options = {}) {
   });
 
   if (!response.ok) {
-    throw new Error(
-      `Could not download ${repositoryPath}: ${response.status}`
-    );
+    throw new Error(`Could not load ${actualPath}: ${response.status}`);
   }
 
-  const contentType =
-    response.headers.get('content-type') || 'application/octet-stream';
-
-  let body = Buffer.from(await response.arrayBuffer());
-
-  // When the chosen homepage is in a subfolder, make relative CSS/JS/image
-  // paths resolve from that folder while the page is shown at "/".
-  if (options.injectBase && /\.html?$/i.test(repositoryPath)) {
-    let html = body.toString('utf8');
-
-    if (!/<base\s/i.test(html)) {
-      const directory = repositoryPath.includes('/')
-        ? repositoryPath.slice(0, repositoryPath.lastIndexOf('/') + 1)
-        : '';
-
-      const baseTag = `<base href="/${directory}">`;
-
-      if (/<head[^>]*>/i.test(html)) {
-        html = html.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`);
-      } else {
-        html = `${baseTag}${html}`;
-      }
-    }
-
-    body = Buffer.from(html, 'utf8');
-  }
-
-  res.setHeader('Content-Type', contentType);
+  // Return the HTML file itself. Do not load, parse, or expose
+  // any other repository files.
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('Cache-Control', 'public, max-age=300');
-  res.send(body);
+
+  const html = await response.text();
+  res.send(html);
+
   return true;
 }
 
@@ -152,98 +128,75 @@ app.get('/health', (req, res) => {
   });
 });
 
-// List every file discovered in the repository.
+// List only the five permitted HTML files, not the full repository.
 app.get('/__repo/files', async (req, res) => {
   try {
-    const files = await getRepositoryFiles();
+    const files = await getAllowedRepositoryFiles();
 
     res.json({
       repository: `${GITHUB_OWNER}/${GITHUB_REPO}`,
       branch: GITHUB_BRANCH,
-      index: findIndexFile(files),
       count: files.length,
       files
     });
   } catch (error) {
     console.error(error);
     res.status(502).json({
-      error: 'Could not read the GitHub repository file list.'
+      error: 'Could not retrieve the permitted HTML files from GitHub.'
     });
   }
 });
 
-// Serve the repository's index.html at the home page.
+// Root loads the first permitted file found, if available.
 app.get('/', async (req, res) => {
   try {
-    const files = await getRepositoryFiles();
-    const indexFile = findIndexFile(files);
+    const files = await getAllowedRepositoryFiles();
 
-    if (!indexFile) {
-      return res.status(404).send(
-        'No index.html was found in the GitHub repository.'
-      );
+    if (files.length === 0) {
+      return res.status(404).send('None of the allowed HTML files were found.');
     }
 
-    await sendRepositoryFile(res, indexFile, { injectBase: true });
+    await serveAllowedFile(res, files[0]);
   } catch (error) {
     console.error(error);
-    res.status(502).send('Unable to load the website from GitHub.');
+    res.status(502).send('Unable to load the allowed HTML file from GitHub.');
   }
 });
 
-// Friendly routes: find these files even if they are inside subfolders.
-const friendlyPages = {
-  '/login': 'login.html',
-  '/signup': 'signup.html',
-  '/home': 'home.html'
-};
+// Each permitted filename can be requested directly, even if it is
+// stored in a subfolder in the GitHub repository.
+app.get('/:fileName', async (req, res, next) => {
+  const requestedName = req.params.fileName.toLowerCase();
 
-for (const [route, fileName] of Object.entries(friendlyPages)) {
-  app.get(route, async (req, res) => {
-    try {
-      const files = await getRepositoryFiles();
-      const match = files.find(
-        (file) => file.toLowerCase() === fileName ||
-          file.toLowerCase().endsWith(`/${fileName}`)
-      );
+  if (!ALLOWED_FILES.has(requestedName)) {
+    return res.status(404).send('This file is not allowed.');
+  }
 
-      if (!match) {
-        return res.status(404).send(`${fileName} was not found in GitHub.`);
-      }
-
-      await sendRepositoryFile(res, match, { injectBase: true });
-    } catch (error) {
-      console.error(error);
-      res.status(502).send(`Unable to load ${fileName} from GitHub.`);
-    }
-  });
-}
-
-// Serve any other repository file, including files in nested directories.
-app.use(async (req, res) => {
   try {
-    const requestedPath = safeDecodePath(req.path);
+    const files = await getAllowedRepositoryFiles();
 
-    if (!requestedPath || requestedPath.includes('\\') ||
-        requestedPath.split('/').some((part) => part === '.' || part === '..')) {
-      return res.status(400).send('Invalid file path.');
+    const match = files.find(
+      (file) => file.split('/').pop().toLowerCase() === requestedName
+    );
+
+    if (!match) {
+      return res.status(404).send('Allowed HTML file not found in GitHub.');
     }
 
-    const found = await sendRepositoryFile(res, requestedPath);
-
-    if (!found) {
-      return res.status(404).send('File not found in the GitHub repository.');
-    }
+    await serveAllowedFile(res, match);
   } catch (error) {
     console.error(error);
-    res.status(502).send('Unable to load this file from GitHub.');
+    res.status(502).send('Unable to load this HTML file from GitHub.');
   }
 });
 
-// Listen on all interfaces so hosting providers such as Render can reach it.
+// Block all other paths and file types.
+app.use((req, res) => {
+  res.status(404).send('Not found. Only the five permitted HTML files are available.');
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(
-    `Rabbit is running on port ${PORT} and serving ` +
-    `${GITHUB_OWNER}/${GITHUB_REPO}@${GITHUB_BRANCH}`
+    `Rabbit is running on port ${PORT}; only the five permitted HTML files are enabled.`
   );
 });
