@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Home – Rabbit</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #000;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+    }
+    .content {
+      text-align: center;
+      padding: 40px;
+    }
+    .logo {
+      width: 72px;
+      height: 72px;
+      margin-bottom: 32px;
+      opacity: 0.9;
+      animation: float 3s ease-in-out infinite;
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+    h1 {
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: -0.5px;
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+    .carrot {
+      font-size: 32px;
+      margin: 16px 0;
+    }
+    .user-info {
+      margin-top: 40px;
+      font-size: 14px;
+      color: #888;
+    }
+    .logout-btn {
+      margin-top: 24px;
+      background: transparent;
+      border: 1px solid #444;
+      color: #ccc;
+      padding: 10px 28px;
+      border-radius: 999px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .logout-btn:hover {
+      border-color: #e85a4f;
+      color: #e85a4f;
+    }
+  </style>
+</head>
+<body>
+  <div class="content">
+    <img src="data:image/png;base64,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" alt="Rabbit" class="logo">
+    <h1>Building this part<br>with carrots hehe</h1>
+    <div class="carrot">🥕</div>
+    <p class="user-info" id="userInfo">Loading...</p>
+    <button class="logout-btn" id="logoutBtn">Log Out</button>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+    import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyB0oC7igOIP6DCE6ZRQmWOe2E7Ennt1t_U",
+      authDomain: "rabbit-4d9dd.firebaseapp.com",
+      projectId: "rabbit-4d9dd",
+      storageBucket: "rabbit-4d9dd.firebasestorage.app",
+      messagingSenderId: "931872074964",
+      appId: "1:931872074964:web:d4fc4c45675ed3f6ba1f41",
+      measurementId: "G-0YY44D033K"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+
+    onAuthStateChanged(auth, (user) => {
+      if (!user) {
+        // Not logged in → send to login
+        window.location.href = '/login';
+        return;
+      }
+      document.getElementById('userInfo').textContent = `Logged in as ${user.email}`;
+    });
+
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+      await signOut(auth);
+      window.location.href = '/';
+    });
+  </script>
+</body>
+</html>
