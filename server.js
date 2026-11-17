@@ -148,29 +148,35 @@ async function getRepositoryFiles(forceRefresh = false) {
   return cachedFiles;
 }
 
-function normalizeRepoPath(input) {
+function normalizeRepoPath(input, { decode = true } = {}) {
   if (typeof input !== 'string' || !input || input.includes('\\')) {
     return null;
   }
 
-  let decoded;
+  // Express route paths start with "/"; repository paths do not.
+  const candidate = input.replace(/^\/+/, '');
+
+  let normalized;
   try {
-    decoded = decodeURIComponent(input);
+    // req.path is URL-encoded; req.query values are already decoded by Express.
+    normalized = decode ? decodeURIComponent(candidate) : candidate;
   } catch {
     return null;
   }
 
-  const parts = decoded.split('/');
+  const parts = normalized.split('/');
 
   if (
-    decoded.startsWith('/') ||
+    !normalized ||
+    normalized.startsWith('/') ||
     parts.some((part) => !part || part === '.' || part === '..') ||
-    decoded.includes('\0')
+    normalized.includes('\0') ||
+    normalized.includes('\\')
   ) {
     return null;
   }
 
-  return decoded;
+  return normalized;
 }
 
 async function getRepositoryFile(repoPath) {
@@ -358,7 +364,7 @@ app.get('/__repo/files', async (req, res) => {
 
 app.get('/__repo/file', async (req, res) => {
   try {
-    const repoPath = normalizeRepoPath(req.query.path);
+    const repoPath = normalizeRepoPath(req.query.path, { decode: false });
 
     if (!repoPath) {
       return res.status(400).send('Invalid repository file path.');
@@ -480,7 +486,7 @@ app.use(async (req, res) => {
 });
 
 if (typeof fetch !== 'function') {
-  console.error('This server requires Node.js 18 or newer (built-in fetch is missing).');
+  throw new Error('This server requires Node.js 18 or newer (built-in fetch is missing).');
 }
 
 app.listen(PORT, '0.0.0.0', () => {
