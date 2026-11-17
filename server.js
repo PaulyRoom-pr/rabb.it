@@ -1,47 +1,46 @@
-const express = require("express");
-const path = require("path");
-const fs = require("fs");
+const express = require('express');
+const path = require('path');
 
 const app = express();
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
 
-// Set SITE_DIR in Render if your built frontend is in a different folder.
-const candidates = [
-  process.env.SITE_DIR,
-  "dist",
-  "build",
-  "public",
-  "client/dist",
-  "client/build",
-  "client/public",
-  "."
-].filter(Boolean);
+// Trust proxy (important on Render)
+app.set('trust proxy', 1);
 
-const siteDir = candidates
-  .map((folder) => path.resolve(__dirname, folder))
-  .find((folder) => fs.existsSync(path.join(folder, "index.html")));
-
-if (!siteDir) {
-  console.error(
-    "Could not find index.html. Build the frontend first or set SITE_DIR."
-  );
-  process.exit(1);
-}
-
-app.disable("x-powered-by");
-
-// Serve files such as JavaScript, CSS, images, fonts, and HTML.
-app.use(express.static(siteDir, {
-  dotfiles: "ignore",
-  index: "index.html"
+// Serve static files from the public directory
+app.use(express.static(path.join(__dirname, 'public'), {
+  maxAge: '1d',
+  etag: true
 }));
 
-// Client-side routes fall back to the app entry point.
-app.get(/.*/, (req, res) => {
-  res.sendFile(path.join(siteDir, "index.html"));
+// Explicit clean routes
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Website listening on port ${PORT}`);
-  console.log(`Serving frontend from ${siteDir}`);
+app.get('/login', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.get('/signup', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'signup.html'));
+});
+
+app.get('/home', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'home.html'));
+});
+
+// Health check for Render
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', service: 'rabbit' });
+});
+
+// Fallback – send unknown routes to landing page
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Listen on 0.0.0.0 so Render can reach the service
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🐇 Rabbit is running on port ${PORT}`);
 });
