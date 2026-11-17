@@ -1,26 +1,28 @@
 const express = require('express');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.set('trust proxy', 1);
 
+// Set GITHUB_TOKEN in your hosting environment only if the repository is private
+// or you need a higher GitHub API rate limit. Never put the token in frontend code.
 const GITHUB_OWNER = 'PaulyRoom-pr';
 const GITHUB_REPO = 'rabb.it';
 const GITHUB_BRANCH = 'main';
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
 
 const API_TREE_URL =
-  `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/git/trees/${GITHUB_BRANCH}?recursive=1`;
+  `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/git/trees/${encodeURIComponent(GITHUB_BRANCH)}?recursive=1`;
 
 const RAW_BASE_URL =
-  `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/`;
+  `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${encodeURIComponent(GITHUB_BRANCH)}/`;
 
-const TREE_CACHE_MS = 5 * 60 * 1000;
+const TREE_CACHE_MS = 60 * 1000;
 let cachedFiles = null;
 let treeFetchedAt = 0;
 
-// These five files must be shown as source text in the dashboard
-// and returned as plain text when opened directly through /__repo/file.
 const TEXT_ONLY_FILES = new Set([
   'reportabuseapi.html',
   'movieapi.html',
@@ -55,26 +57,82 @@ const MIME_TYPES = {
   '.otf': 'font/otf'
 };
 
-async function getRepositoryFiles() {
-  if (cachedFiles && Date.now() - treeFetchedAt < TREE_CACHE_MS) {
+function githubHeaders() {
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'Rabbit-Express-Server'
+  };
+
+  if (GITHUB_TOKEN) {
+    headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
+  }
+
+  return headers;
+}
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error('GitHub request timed out after 20 seconds.');
+    }
+
+    throw new Error(`Network request to GitHub failed: ${error.message}`);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function getRepositoryFiles(forceRefresh = false) {
+  if (
+    !forceRefresh &&
+    cachedFiles &&
+    Date.now() - treeFetchedAt < TREE_CACHE_MS
+  ) {
     return cachedFiles;
   }
 
-  const response = await fetch(API_TREE_URL, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-      'User-Agent': 'Rabbit-Express-Server'
-    }
+  const response = await fetchWithTimeout(API_TREE_URL, {
+    headers: githubHeaders()
   });
 
   if (!response.ok) {
-    throw new Error(`GitHub tree request failed: ${response.status}`);
+    let detail = '';
+    try {
+      const body = await response.json();
+      detail = body.message || JSON.stringify(body);
+    } catch {
+      detail = await response.text().catch(() => '');
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(
+        `GitHub denied the request (${response.status}). ${detail} ` +
+        'Check the repository visibility, token permissions, and API rate limit.'
+      );
+    }
+
+    if (response.status === 404) {
+      throw new Error(
+        `GitHub returned 404. Check that ${GITHUB_OWNER}/${GITHUB_REPO} ` +
+        `and branch "${GITHUB_BRANCH}" exist and are accessible. ${detail}`
+      );
+    }
+
+    throw new Error(`GitHub API error ${response.status}: ${detail}`);
   }
 
   const data = await response.json();
 
   if (!Array.isArray(data.tree)) {
-    throw new Error('GitHub returned an invalid repository tree.');
+    throw new Error('GitHub response did not contain a file tree.');
   }
 
   cachedFiles = data.tree
@@ -84,7 +142,7 @@ async function getRepositoryFiles() {
   treeFetchedAt = Date.now();
 
   if (data.truncated) {
-    console.warn('GitHub truncated the recursive tree response.');
+    console.warn('GitHub returned a truncated repository file tree.');
   }
 
   return cachedFiles;
@@ -115,34 +173,38 @@ function normalizeRepoPath(input) {
   return decoded;
 }
 
-async function getRepositoryFile(pathInRepo) {
+async function getRepositoryFile(repoPath) {
   const files = await getRepositoryFiles();
 
-  // Require an exact path match from GitHub's repository tree.
-  if (!files.includes(pathInRepo)) {
+  if (!files.includes(repoPath)) {
     return null;
   }
 
-  const encodedPath = pathInRepo
+  const encodedPath = repoPath
     .split('/')
     .map(encodeURIComponent)
     .join('/');
 
-  const response = await fetch(`${RAW_BASE_URL}${encodedPath}`, {
-    headers: { 'User-Agent': 'Rabbit-Express-Server' }
+  const rawUrl = RAW_BASE_URL + encodedPath;
+
+  const response = await fetchWithTimeout(rawUrl, {
+    headers: {
+      'User-Agent': 'Rabbit-Express-Server',
+      ...(GITHUB_TOKEN ? { Authorization: `Bearer ${GITHUB_TOKEN}` } : {})
+    }
   });
 
   if (!response.ok) {
-    throw new Error(`GitHub could not return ${pathInRepo}: ${response.status}`);
+    throw new Error(
+      `GitHub could not download "${repoPath}" (HTTP ${response.status}).`
+    );
   }
 
-  const buffer = Buffer.from(await response.arrayBuffer());
-  const extension = path.extname(pathInRepo).toLowerCase();
-
   return {
-    buffer,
-    contentType: MIME_TYPES[extension] || 'application/octet-stream',
-    extension
+    buffer: Buffer.from(await response.arrayBuffer()),
+    contentType:
+      MIME_TYPES[path.extname(repoPath).toLowerCase()] ||
+      'application/octet-stream'
   };
 }
 
@@ -155,162 +217,145 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-function fileUrl(pathInRepo) {
-  return `/__repo/file?path=${encodeURIComponent(pathInRepo)}`;
+function repoFileUrl(repoPath) {
+  return `/__repo/file?path=${encodeURIComponent(repoPath)}`;
+}
+
+function errorPage(error) {
+  const message = escapeHtml(error.message || String(error));
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GitHub connection error</title>
+<style>
+body{font-family:Arial,sans-serif;background:#f4f5f7;padding:24px;color:#222}
+main{max-width:850px;margin:auto;background:white;padding:24px;border-radius:12px}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#fff0f0;padding:16px;border-radius:8px;color:#8b1d1d}
+</style>
+</head>
+<body><main>
+<h1>Unable to load the GitHub repository</h1>
+<p>The server received this error:</p>
+<pre>${message}</pre>
+<p>Repository: ${GITHUB_OWNER}/${GITHUB_REPO}</p>
+<p>Branch: ${GITHUB_BRANCH}</p>
+<p>Check the server logs for additional details. If the repository is private,
+set a read-only GITHUB_TOKEN environment variable in your hosting dashboard.</p>
+</main></body></html>`;
 }
 
 async function sendDashboard(res) {
   const files = await getRepositoryFiles();
 
-  const rows = await Promise.all(files.map(async (filePath) => {
-    const baseName = path.posix.basename(filePath).toLowerCase();
-    const isTextOnly = TEXT_ONLY_FILES.has(baseName);
-    const isHtml = /\.(html?|xhtml)$/i.test(filePath);
-    const url = fileUrl(filePath);
-    const safeName = escapeHtml(filePath);
+  const cards = await Promise.all(files.map(async (repoPath) => {
+    const name = path.posix.basename(repoPath);
+    const lowerName = name.toLowerCase();
+    const isTextOnly = TEXT_ONLY_FILES.has(lowerName);
+    const isHtml = /\.(html?|xhtml)$/i.test(repoPath);
+    const url = repoFileUrl(repoPath);
+    const safePath = escapeHtml(repoPath);
 
     if (isTextOnly) {
       try {
-        const file = await getRepositoryFile(filePath);
-        const source = file.buffer.toString('utf8');
-
+        const file = await getRepositoryFile(repoPath);
         return `
-          <section class="file-card">
-            <h2>${safeName}</h2>
-            <p class="kind">Source text (preview disabled)</p>
-            <pre><code>${escapeHtml(source)}</code></pre>
-            <a href="${url}" target="_blank" rel="noopener">Open text file</a>
-          </section>`;
+<section class="file-card">
+<h2>${safePath}</h2>
+<p class="kind">Source text (preview disabled)</p>
+<pre><code>${escapeHtml(file.buffer.toString('utf8'))}</code></pre>
+<a href="${url}" target="_blank" rel="noopener">Open source text</a>
+</section>`;
       } catch (error) {
-        console.error(error);
         return `
-          <section class="file-card">
-            <h2>${safeName}</h2>
-            <p class="error">Could not load this file from GitHub.</p>
-          </section>`;
+<section class="file-card">
+<h2>${safePath}</h2>
+<p class="error">${escapeHtml(error.message)}</p>
+</section>`;
       }
     }
 
     if (isHtml) {
       return `
-        <section class="file-card">
-          <h2>${safeName}</h2>
-          <p class="kind">Rendered HTML preview</p>
-          <iframe title="${safeName}" src="${url}" loading="lazy"></iframe>
-          <a href="${url}" target="_blank" rel="noopener">Open page</a>
-        </section>`;
+<section class="file-card">
+<h2>${safePath}</h2>
+<p class="kind">Rendered HTML preview</p>
+<iframe title="${safePath}" src="${url}" loading="lazy"></iframe>
+<a href="${url}" target="_blank" rel="noopener">Open page</a>
+</section>`;
     }
 
     return `
-      <section class="file-card">
-        <h2>${safeName}</h2>
-        <p class="kind">Repository file</p>
-        <a href="${url}" target="_blank" rel="noopener">Open or view file</a>
-      </section>`;
+<section class="file-card">
+<h2>${safePath}</h2>
+<p class="kind">Repository file</p>
+<a href="${url}" target="_blank" rel="noopener">Open or view file</a>
+</section>`;
   }));
 
-  const html = `<!doctype html>
+  const page = `<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Rabbit Repository</title>
-  <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      padding: 24px;
-      color: #202124;
-      background: #f3f4f6;
-      font-family: Arial, sans-serif;
-    }
-    main { max-width: 1400px; margin: auto; }
-    h1 { margin-top: 0; }
-    .summary { color: #555; }
-    .file-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-      gap: 18px;
-    }
-    .file-card {
-      min-width: 0;
-      padding: 16px;
-      background: white;
-      border: 1px solid #ddd;
-      border-radius: 12px;
-    }
-    .file-card h2 {
-      margin: 0 0 10px;
-      font-size: 16px;
-      overflow-wrap: anywhere;
-    }
-    .kind { color: #666; font-size: 13px; }
-    iframe {
-      display: block;
-      width: 100%;
-      height: 420px;
-      border: 1px solid #ccc;
-      border-radius: 8px;
-      background: white;
-    }
-    pre {
-      max-height: 420px;
-      overflow: auto;
-      padding: 12px;
-      border-radius: 8px;
-      background: #171923;
-      color: #f4f4f5;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      font-size: 12px;
-    }
-    a { display: inline-block; margin-top: 10px; color: #145dcc; }
-    .error { color: #a22; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rabbit Repository</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:24px;color:#202124;background:#f3f4f6;font-family:Arial,sans-serif}
+main{max-width:1400px;margin:auto}
+.summary{color:#555}
+.file-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}
+.file-card{min-width:0;padding:16px;background:white;border:1px solid #ddd;border-radius:12px}
+.file-card h2{margin:0 0 10px;font-size:16px;overflow-wrap:anywhere}
+.kind{color:#666;font-size:13px}
+iframe{display:block;width:100%;height:420px;border:1px solid #ccc;border-radius:8px;background:white}
+pre{max-height:420px;overflow:auto;padding:12px;border-radius:8px;background:#171923;color:#f4f4f5;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
+a{display:inline-block;margin-top:10px;color:#145dcc}
+.error{color:#a22}
+</style>
 </head>
-<body>
-  <main>
-    <h1>Rabbit Repository Files</h1>
-    <p class="summary">
-      ${files.length} files found in ${GITHUB_OWNER}/${GITHUB_REPO}
-      (${GITHUB_BRANCH}). HTML files are previewed, except the five
-      text-only files which are displayed as source text.
-    </p>
-    <div class="file-grid">${rows.join('\n')}</div>
-  </main>
-</body>
-</html>`;
+<body><main>
+<h1>Rabbit Repository Files</h1>
+<p class="summary">${files.length} files found in ${GITHUB_OWNER}/${GITHUB_REPO} (${GITHUB_BRANCH}).</p>
+<div class="file-grid">${cards.join('\n')}</div>
+</main></body></html>`;
 
-  res.status(200);
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-store');
-  res.send(html);
+  res.status(200).type('html').send(page);
 }
 
-// Health check.
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'rabbit',
     repository: `${GITHUB_OWNER}/${GITHUB_REPO}`,
-    branch: GITHUB_BRANCH
+    branch: GITHUB_BRANCH,
+    nodeVersion: process.version,
+    fetchAvailable: typeof fetch === 'function'
   });
 });
 
-// List every repository file path.
+app.get('/__repo/refresh', async (req, res) => {
+  try {
+    const files = await getRepositoryFiles(true);
+    res.json({ ok: true, count: files.length, files });
+  } catch (error) {
+    console.error('Repository refresh failed:', error);
+    res.status(502).json({ ok: false, error: error.message });
+  }
+});
+
 app.get('/__repo/files', async (req, res) => {
   try {
     const files = await getRepositoryFiles();
     res.json({ count: files.length, files });
   } catch (error) {
-    console.error(error);
-    res.status(502).json({ error: 'Could not list repository files.' });
+    console.error('Repository listing failed:', error);
+    res.status(502).json({ error: error.message });
   }
 });
 
-// Repository file endpoint. All files are accessible here.
-// The five named HTML files are sent as text/plain; other HTML files
-// are sent as text/html and therefore render as webpages in browsers.
 app.get('/__repo/file', async (req, res) => {
   try {
     const repoPath = normalizeRepoPath(req.query.path);
@@ -325,8 +370,9 @@ app.get('/__repo/file', async (req, res) => {
       return res.status(404).send('File not found in the GitHub repository.');
     }
 
-    const baseName = path.posix.basename(repoPath).toLowerCase();
-    const textOnly = TEXT_ONLY_FILES.has(baseName);
+    const textOnly = TEXT_ONLY_FILES.has(
+      path.posix.basename(repoPath).toLowerCase()
+    );
 
     res.status(200);
     res.setHeader(
@@ -337,18 +383,17 @@ app.get('/__repo/file', async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=300');
     res.send(file.buffer);
   } catch (error) {
-    console.error(error);
-    res.status(502).send('Unable to load this file from GitHub.');
+    console.error('File request failed:', error);
+    res.status(502).send(error.message);
   }
 });
 
-// Main page and the requested dashboard filename both show the file browser.
 app.get('/', async (req, res) => {
   try {
     await sendDashboard(res);
   } catch (error) {
-    console.error(error);
-    res.status(502).send('Unable to load the GitHub repository dashboard.');
+    console.error('Dashboard load failed:', error);
+    res.status(502).type('html').send(errorPage(error));
   }
 });
 
@@ -356,13 +401,11 @@ app.get('/y1hs6s2m8.html', async (req, res) => {
   try {
     await sendDashboard(res);
   } catch (error) {
-    console.error(error);
-    res.status(502).send('Unable to load the GitHub repository dashboard.');
+    console.error('Dashboard load failed:', error);
+    res.status(502).type('html').send(errorPage(error));
   }
 });
 
-// Friendly direct URLs for the four other text-only files.
-// They return their HTML source as plain text, not a rendered preview.
 const textOnlyRoutes = [
   'MovieApi.html',
   'MembershipApi.html',
@@ -383,18 +426,15 @@ for (const fileName of textOnlyRoutes) {
       }
 
       const file = await getRepositoryFile(match);
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-      res.send(file.buffer);
+      res.type('text/plain').send(file.buffer);
     } catch (error) {
-      console.error(error);
-      res.status(502).send(`Unable to load ${fileName}.`);
+      console.error(`Could not load ${fileName}:`, error);
+      res.status(502).send(error.message);
     }
   });
 }
 
-// All remaining direct repository paths are resolved from the GitHub tree.
-// Only exact paths present in the repository are served.
+// Any other exact repository path is served using its appropriate content type.
 app.use(async (req, res) => {
   try {
     const repoPath = normalizeRepoPath(req.path);
@@ -409,8 +449,9 @@ app.use(async (req, res) => {
       return res.status(404).send('File not found.');
     }
 
-    const baseName = path.posix.basename(repoPath).toLowerCase();
-    const textOnly = TEXT_ONLY_FILES.has(baseName);
+    const textOnly = TEXT_ONLY_FILES.has(
+      path.posix.basename(repoPath).toLowerCase()
+    );
 
     res.setHeader(
       'Content-Type',
@@ -420,14 +461,18 @@ app.use(async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=300');
     res.send(file.buffer);
   } catch (error) {
-    console.error(error);
-    res.status(502).send('Unable to load this repository file.');
+    console.error('Repository file route failed:', error);
+    res.status(502).send(error.message);
   }
 });
 
+if (typeof fetch !== 'function') {
+  console.error('This server requires Node.js 18 or newer (built-in fetch is missing).');
+}
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(
-    `Rabbit is running on port ${PORT}, connected to ` +
-    `${GITHUB_OWNER}/${GITHUB_REPO}@${GITHUB_BRANCH}`
+    `Rabbit listening on port ${PORT}; repository: ` +
+    `${GITHUB_OWNER}/${GITHUB_REPO}@${GITHUB_BRANCH}; Node ${process.version}`
   );
 });
