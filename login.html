@@ -33,10 +33,44 @@
     .btn {
       width: 100%; background: #e85a4f; color: #fff; border: none; border-radius: 999px;
       padding: 14px 0; font-size: 16px; font-weight: 600; cursor: pointer;
-      margin-top: 8px; transition: background 0.2s;
+      margin-top: 8px; transition: all 0.3s ease;
+      box-shadow: none; opacity: 0.4; filter: grayscale(0.4);
     }
-    .btn:hover { background: #d94a3f; }
-    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .btn.enabled {
+      opacity: 1; filter: none;
+      background: #ff5c4d;
+      box-shadow:
+        0 0 8px #ff5c4d,
+        0 0 20px #ff5c4d,
+        0 0 40px rgba(255,92,77,0.7),
+        0 0 80px rgba(255,92,77,0.4);
+      animation: neonPulse 1.6s ease-in-out infinite;
+    }
+    .btn.enabled:hover {
+      background: #ff6b5b;
+      box-shadow:
+        0 0 12px #ff6b5b,
+        0 0 28px #ff6b5b,
+        0 0 55px rgba(255,107,91,0.8),
+        0 0 100px rgba(255,107,91,0.5);
+    }
+    .btn:disabled { cursor: not-allowed; }
+    @keyframes neonPulse {
+      0%, 100% {
+        box-shadow:
+          0 0 8px #ff5c4d,
+          0 0 20px #ff5c4d,
+          0 0 40px rgba(255,92,77,0.6),
+          0 0 70px rgba(255,92,77,0.3);
+      }
+      50% {
+        box-shadow:
+          0 0 14px #ff6b5b,
+          0 0 32px #ff6b5b,
+          0 0 60px rgba(255,107,91,0.85),
+          0 0 110px rgba(255,107,91,0.5);
+      }
+    }
     .error-msg { color: #e74c3c; font-size: 13px; margin-top: 12px; text-align: center; display: none; }
     .footer-text { text-align: center; margin-top: 24px; font-size: 14px; color: #666; }
     .footer-text a { color: #e85a4f; text-decoration: none; font-weight: 500; }
@@ -60,7 +94,7 @@
         <label>Password</label>
         <input type="password" id="password" required placeholder="••••••••" />
       </div>
-      <button type="submit" class="btn" id="loginBtn">Log In</button>
+      <button type="submit" class="btn" id="loginBtn" disabled>Log In</button>
       <p class="error-msg" id="errorMsg"></p>
     </form>
 
@@ -95,6 +129,24 @@
     const loginBtn = document.getElementById('loginBtn');
     const errorMsg = document.getElementById('errorMsg');
 
+    const emailInput = document.getElementById('email');
+    const passwordInput = document.getElementById('password');
+
+    function updateButtonState() {
+      const filled = emailInput.value.trim().length > 0 && passwordInput.value.length > 0;
+      loginBtn.disabled = !filled;
+      if (filled) {
+        loginBtn.classList.add('enabled');
+      } else {
+        loginBtn.classList.remove('enabled');
+      }
+    }
+
+    emailInput.addEventListener('input', updateButtonState);
+    passwordInput.addEventListener('input', updateButtonState);
+    updateButtonState();
+
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       errorMsg.style.display = 'none';
@@ -115,8 +167,8 @@
         if (err.code === 'auth/too-many-requests') message = 'Too many attempts. Try again later.';
         errorMsg.textContent = message;
         errorMsg.style.display = 'block';
-        loginBtn.disabled = false;
         loginBtn.textContent = 'Log In';
+        updateButtonState();
       }
     });
   </script>
