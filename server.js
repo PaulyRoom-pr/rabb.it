@@ -331,6 +331,115 @@ a{display:inline-block;margin-top:10px;color:#145dcc}
   res.status(200).type('html').send(page);
 }
 
+
+// IP ban list is read from the repository's root-level IPBAN.json.
+// Supported formats:
+//   ["203.0.113.10", "::1"]
+//   { "bannedIps": ["203.0.113.10", "::1"] }
+//   { "ips": ["203.0.113.10", "::1"] }
+const IP_BAN_FILE = 'IPBAN.json';
+const IP_BAN_CACHE_MS = 30 * 1000;
+let cachedBannedIps = null;
+let ipBanFetchedAt = 0;
+let ipBanLoadPromise = null;
+
+function normalizeIp(value) {
+  if (typeof value !== 'string') return null;
+
+  let ip = value.trim();
+  if (!ip) return null;
+
+  // Express/Node may represent IPv4 clients as IPv4-mapped IPv6 addresses.
+  if (ip.toLowerCase().startsWith('::ffff:')) {
+    ip = ip.slice(7);
+  }
+
+  // Ignore a zone identifier on IPv6 addresses, if one is present.
+  const zoneIndex = ip.indexOf('%');
+  if (zoneIndex !== -1) ip = ip.slice(0, zoneIndex);
+
+  return require('node:net').isIP(ip) ? ip.toLowerCase() : null;
+}
+
+function extractBannedIps(data) {
+  if (!data || typeof data !== 'object' || !Array.isArray(data.bannedIps)) {
+    throw new Error(
+      'IPBAN.json must contain a "bannedIps" array of IP address strings.'
+    );
+  }
+
+  return new Set(data.bannedIps.map(normalizeIp).filter(Boolean));
+}
+
+async function getBannedIps(forceRefresh = false) {
+  if (
+    !forceRefresh &&
+    cachedBannedIps &&
+    Date.now() - ipBanFetchedAt < IP_BAN_CACHE_MS
+  ) {
+    return cachedBannedIps;
+  }
+
+  // Prevent multiple simultaneous requests from fetching the same file.
+  if (ipBanLoadPromise) return ipBanLoadPromise;
+
+  ipBanLoadPromise = (async () => {
+    const file = await getRepositoryFile(IP_BAN_FILE);
+    if (!file) {
+      throw new Error(
+        `${IP_BAN_FILE} was not found in the root of the GitHub repository.`
+      );
+    }
+
+    const parsed = JSON.parse(file.buffer.toString('utf8'));
+    const nextBannedIps = extractBannedIps(parsed);
+
+    cachedBannedIps = nextBannedIps;
+    ipBanFetchedAt = Date.now();
+    return cachedBannedIps;
+  })();
+
+  try {
+    return await ipBanLoadPromise;
+  } finally {
+    ipBanLoadPromise = null;
+  }
+}
+
+// This middleware runs before every page, API, and repository-file route.
+app.use(async (req, res, next) => {
+  try {
+    const bannedIps = await getBannedIps();
+    const clientIp = normalizeIp(req.ip || req.socket.remoteAddress);
+
+    if (clientIp && bannedIps.has(clientIp)) {
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(403).type('text').send('Access denied.');
+    }
+
+    return next();
+  } catch (error) {
+    // If the ban list has never loaded, fail closed rather than accidentally
+    // allowing access while the IP ban service is unavailable.
+    if (cachedBannedIps) {
+      console.error('Could not refresh IP ban list; using last known list:', error);
+      const clientIp = normalizeIp(req.ip || req.socket.remoteAddress);
+
+      if (clientIp && cachedBannedIps.has(clientIp)) {
+        res.setHeader('Cache-Control', 'no-store');
+        return res.status(403).type('text').send('Access denied.');
+      }
+
+      return next();
+    }
+
+    console.error('Could not load IP ban list:', error);
+    return res.status(503).type('text').send(
+      'Access checks are temporarily unavailable. Please try again later.'
+    );
+  }
+});
+
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
